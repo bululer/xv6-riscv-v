@@ -70,15 +70,15 @@ copyinstr(kernel/vm.c:403)从用户页表 pagetable 的虚拟地址 srcva 复制
 
 kernelvec将寄存器保存在被中断的内核线程的堆栈上，这是有道理的，因为寄存器值属于该线程。如果陷阱导致切换到不同的线程，这一点尤为重要 - 在这种情况下，陷阱实际上会从新线程的堆栈返回，将被中断的线程的保存的寄存器安全地留在其堆栈上。
 
-kernelvec在保存寄存器后跳转到kerneltrap（kernel/trap.c:135）。kerneltrap准备处理两种类型的陷阱：设备中断和异常。它调用devintr（kernel/trap.c:178）来检查和处理前者。如果陷阱不是设备中断，那么它必须是异常，如果在xv6内核中发生异常，这总是致命错误；内核会调用panic并停止执行。
-如果kerneltrap是由于定时器中断而被调用的，而且一个进程的内核线程正在运行（与调度线程不同），那么kerneltrap会调用yield，以便让其他线程有机会运行。在某个时刻，其中一个线程将会yield，让我们的线程和它的kerneltrap再次恢复执行。第7章解释了yield中发生的事情。
+kernelvec在保存寄存器后跳转到kerneltrap(kernel/trap.c:135)。kerneltrap准备处理两种类型的陷阱：设备中断和异常。它调用devintr(kernel/trap.c:178)来检查和处理前者。如果陷阱不是设备中断，那么它必须是异常，如果在xv6内核中发生异常，这总是致命错误；内核会调用panic并停止执行。
+如果kerneltrap是由于定时器中断而被调用的，而且一个进程的内核线程正在运行(与调度线程不同)，那么kerneltrap会调用yield，以便让其他线程有机会运行。在某个时刻，其中一个线程将会yield，让我们的线程和它的kerneltrap再次恢复执行。第7章解释了yield中发生的事情。
 
-当kerneltrap的工作完成后，它需要返回到被陷阱中断的代码。因为yield可能会影响sepc和sstatus中的前一个模式，所以kerneltrap在开始时保存了它们。现在它恢复这些控制寄存器并返回到kernelvec（kernel/kernelvec.S:50）。kernelvec从堆栈中弹出保存的寄存器并执行sret，将sepc复制到pc并恢复被中断的内核代码。
+当kerneltrap的工作完成后，它需要返回到被陷阱中断的代码。因为yield可能会影响sepc和sstatus中的前一个模式，所以kerneltrap在开始时保存了它们。现在它恢复这些控制寄存器并返回到kernelvec(kernel/kernelvec.S:50)。kernelvec从堆栈中弹出保存的寄存器并执行sret，将sepc复制到pc并恢复被中断的内核代码。
 
 
 值得考虑一下如果kerneltrap由于定时器中断而调用yield，陷阱返回会发生什么。
 
-在xv6中，当CPU从用户空间进入内核时，会将CPU的stvec设置为kernelvec，你可以在usertrap（kernel/trap.c:29）中看到这一点。在内核已经开始执行但stvec仍然设置为uservec的时间窗口中，绝不能发生设备中断。幸运的是，RISC-V在开始处理陷阱时总是禁用中断，xv6在设置完stvec之后才重新启用中断，因此在这个关键时刻不会发生设备中断。
+在xv6中，当CPU从用户空间进入内核时，会将CPU的stvec设置为kernelvec，你可以在usertrap(kernel/trap.c:29)中看到这一点。在内核已经开始执行但stvec仍然设置为uservec的时间窗口中，绝不能发生设备中断。幸运的是，RISC-V在开始处理陷阱时总是禁用中断，xv6在设置完stvec之后才重新启用中断，因此在这个关键时刻不会发生设备中断。
 
 ### 4.6 pagefault exception
 &emsp;Xv6的异常处理相对简单：如果在用户空间发生异常，内核会终止引发异常的进程。如果在内核中发生异常，内核会宕机。而真实的操作系统通常会以更加复杂和有趣的方式响应异常情况。<br>
@@ -134,5 +134,100 @@ kernelvec在保存寄存器后跳转到kerneltrap（kernel/trap.c:135）。kerne
 
 &emsp;许多设备驱动程序在两个上下文中执行代码：一个是运行在进程的内核线程中的顶半部分(top half)，另一个是在中断时执行的底半部分(bottom half)。顶半部分通常通过系统调用(例如read和write)被调用，这些系统调用希望设备执行输入/输出操作。这段代码可能会请求硬件启动一个操作(例如，请求磁盘读取一个数据块)，然后等待操作完成。最终，设备完成操作并引发一个中断。驱动程序的中断处理程序充当底半部分，它会确定已完成的操作是什么，如果需要的话唤醒等待的进程，并告诉硬件开始处理任何等待的下一个操作。这种分为顶半部分和底半部分的执行方式有助于提高系统的响应性和并发性。<br>
 
-### 5.1
+### 5.1 Code:Console input
+&emsp;控制台驱动程序(kernel/console.c)是驱动程序结构的简单示例。控制台驱动程序通过连接到RISC-V的UART串口硬件接受用户输入的字符。控制台驱动程序一次累积一行输入，并处理特殊输入字符，如退格和控制字符u。用户进程，例如shell，使用read系统调用从控制台获取输入行。当您在QEMU中键入xv6的输入时，您的按键通过QEMU模拟的UART硬件传递给xv6。
+&emsp;驱动程序所操作的UART硬件是QEMU模拟的16550芯片。在实际计算机上，16550芯片通常用于管理与终端或其他计算机连接的RS232串行链接。在运行QEMU时，它与您的键盘和显示器相连接。
+&emsp;UART硬件在软件中显示为一组内存映射的控制寄存器。也就是说，有一些物理地址，RISC-V硬件连接到UART设备，以便加载和存储与设备硬件而不是RAM进行交互。 UART的内存映射地址从0x10000000开始，或称为UART(kernel/memlayout.h:21)。有一些UART控制寄存器，每个都是一个字节宽。它们与UART0的偏移量在(kernel/uart.c:22)中定义。例如，LSR寄存器包含指示是否有待读取的输入字符的位。这些字符(如果有)可以从RHR寄存器中读取。每次读取一个字符时，UART硬件都会将其从等待字符的内部FIFO中删除，并在FIFO为空时清除LSR中的“就绪”位。UART的发送硬件在很大程度上独立于接收硬件；如果软件将一个字节写入THR，UART会发送该字节。
+
+Xv6的主函数在启动时调用consoleinit(kernel/console.c:182)来初始化UART硬件。这段代码配置UART，在每次接收到输入字节时生成接收中断，以及在UART完成发送输出字节时生成传输完成中断(kernel/uart.c:53)。
+```c
+// kernel/console.c
+void
+consoleinit(void)
+{
+  initlock(&cons.lock, "cons");
+
+  uartinit();
+
+  // connect read and write system calls
+  // to consoleread and consolewrite.
+  devsw[CONSOLE].read = consoleread;
+  devsw[CONSOLE].write = consolewrite;
+}
+// kernel/uart.c
+void
+uartinit(void)
+{
+  // disable interrupts.
+  WriteReg(IER, 0x00);
+
+  // special mode to set baud rate.
+  WriteReg(LCR, LCR_BAUD_LATCH);
+
+  // LSB for baud rate of 38.4K.
+  WriteReg(0, 0x03);
+
+  // MSB for baud rate of 38.4K.
+  WriteReg(1, 0x00);
+
+  // leave set-baud mode,
+  // and set word length to 8 bits, no parity.
+  WriteReg(LCR, LCR_EIGHT_BITS);
+
+  // reset and enable FIFOs.
+  WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
+
+  // enable transmit and receive interrupts.
+  WriteReg(IER, IER_TX_ENABLE | IER_RX_ENABLE);
+
+  initlock(&uart_tx_lock, "uart");
+}
+```
+
+xv6的shell通过由init.c(user/init.c:19)打开的文件描述符从控制台读取数据。对read系统调用的调用通过内核传递到consoleread(kernel/console.c:80)。consoleread等待输入到达(通过中断)，并缓冲到cons.buf中，然后将输入复制到用户空间，并在整行输入完毕后返回给用户进程。如果用户尚未输入完整行，任何正在读取的进程将在sleep调用(kernel/console.c:96)中等待(第7章详细解释了sleep的细节)。
+
+当用户输入字符时，UART硬件要求RISC-V引发中断，这会激活xv6的陷阱处理程序。陷阱处理程序调用devintr(kernel/trap.c:178)，检查RISC-V的scause寄存器以确定中断来自外部设备。然后，它要求一个名为PLIC[3]的硬件单元告诉它哪个设备中断了(kernel/trap.c:187)。如果是UART，devintr将调用uartintr。
+
+uartintr(kernel/uart.c:176)从UART硬件读取任何等待的输入字符，并将它们传递给consoleintr(kernel/console.c:136)。它不会等待字符，因为将来的输入会引发新的中断。consoleintr的工作是在cons.buf中累积输入字符，直到整行到达。consoleintr会特殊处理退格键和一些其他字符。当换行符到达时，consoleintr会唤醒等待的consoleread(如果有的话)。
+
+一旦被唤醒，consoleread将观察到cons.buf中有一整行，将其复制到用户空间，然后(通过系统调用机制)返回到用户空间。
+### 5.2 Code:Console output
+
+&emsp;与控制台相关的文件描述符上的写系统调用最终会到达uartputc(kernel/uart.c:87)。设备驱动程序维护一个输出缓冲区(uart_tx_buf)，因此写入进程无需等待UART完成发送；相反，uartputc将每个字符附加到缓冲区，然后调用uartstart来启动设备传输(如果尚未启动)，然后返回。uartputc等待的唯一情况是如果缓冲区已满。
+
+每当UART完成发送一个字节时，它会生成一个中断。uartintr调用uartstart，后者检查设备是否真的已经发送完毕，然后将下一个缓冲的输出字符传递给设备。因此，如果一个进程向控制台写入多个字节，通常第一个字节将由uartputc的调用来启动uartstart发送，其余的缓冲字节将由uartintr中的uartstart调用发送，因为传输完成中断到达。
+
+需要注意的一般模式是通过缓冲和中断将设备活动与进程活动解耦。控制台驱动程序可以处理输入，即使没有进程等待读取它；后续的读取将看到输入。同样，进程可以发送输出而不必等待设备。这种解耦可以通过允许进程与设备I/O并发执行来提高性能，尤其是当设备较慢(如UART)或需要立即响应(如回显键入字符)时，这一点尤为重要。这个想法有时被称为I/O并发。
+
+### 5.3 Concurrency in driver
+&emsp;您可能已经注意到consoleread和consoleintr中的acquire调用。这些调用获取锁，用于保护控制台驱动程序的数据结构免受并发访问的影响。这里存在三种并发危险：不同CPU上的两个进程可能同时调用consoleread；硬件可能要求一个CPU在该CPU已经在consoleread内执行时交付控制台(实际上是UART)中断；硬件可能在consoleread执行时在不同的CPU上交付控制台中断。这些危险可能导致竞争条件或死锁。第6章探讨了这些问题以及锁如何解决它们。
+
+在驱动程序中，并发需要特别小心的另一种情况是，一个进程可能正在等待从设备接收输入，但用于信号到达输入的中断可能会在不同的进程(或根本没有进程)正在运行时到达。因此，中断处理程序不允许考虑它们中断的进程或代码。例如，中断处理程序不能安全地使用当前进程的页表来调用copyout。中断处理程序通常执行相对较少的工作(例如，只是将输入数据复制到缓冲区)，然后唤醒顶层代码来完成其余的工作。
+
+### 5.4 Timer interrupts
+&emsp;xv6使用定时器中断来维护其时钟，并使其能够在计算密集型进程之间切换；在usertrap和kerneltrap中的yield调用导致了这种切换。定时器中断来自连接到每个RISC-V CPU的时钟硬件。xv6对这些时钟硬件进行编程，以便它们定期中断每个CPU。
+
+RISC-V要求定时器中断在机器模式下执行，而不是在监管模式下执行。RISC-V机器模式在没有分页的情况下执行，并带有一组单独的控制寄存器，因此在机器模式下运行普通的xv6内核代码并不可行。因此，xv6将定时器中断完全与上述陷阱机制分开处理。
+
+在start.c中以机器模式执行的代码，在main函数之前，用于设置接收定时器中断(kernel/start.c:63)。这个工作的一部分是编程CLINT硬件(核本地中断器)，以在一定延迟后生成中断。另一部分是设置一个与trapframe类似的临时区域，以帮助定时器中断处理程序保存寄存器和CLINT寄存器的地址。最后，start将mtvec设置为timervec并启用定时器中断。
+
+定时器中断可以在用户或内核代码执行的任何时刻发生；内核无法在关键操作期间禁用定时器中断。因此，定时器中断处理程序必须以一种不会干扰被中断的内核代码的方式执行其工作。基本策略是要求RISC-V引发一个“软中断”并立即返回。RISC-V使用普通的陷阱机制将软中断传递给内核，并允许内核禁用它们。处理由定时器中断生成的软中断的代码可以在devintr(kernel/trap.c:205)中看到。
+
+机器模式的定时器中断处理程序是timervec(kernel/kernelvec.S:95)。它保存了start准备的临时区域中的一些寄存器，告诉CLINT何时生成下一个定时器中断，请求RISC-V引发软中断，然后恢复寄存器并返回。定时器中断处理程序中没有C代码。
+
+### 5.5 Real world
+xv6允许在内核执行时以及在执行用户程序时发生设备和定时器中断。即使在内核执行期间，定时器中断也会强制进行线程切换(调用yield)。在内核线程之间公平地切片CPU的能力在内核线程有时需要花费大量计算时间而不返回到用户空间时非常有用。然而，内核代码需要注意，它可能会被挂起(由于定时器中断)并稍后在不同的CPU上恢复，这是xv6中一些复杂性的源泉(参见第6.6节)。如果设备和定时器中断仅在执行用户代码时发生，内核可以更简单一些。
+
+支持典型计算机上的所有设备以其全部功能是一项繁重的工作，因为有很多设备，这些设备有许多功能，设备和驱动程序之间的协议可能复杂且文档不完善。在许多操作系统中，驱动程序的代码量比核心内核还要多。
+
+UART驱动程序通过读取UART控制寄存器一次检索一个字节的数据；这种模式称为编程I/O，因为软件驱动数据传输。编程I/O很简单，但在高数据速率下使用起来太慢。需要以高速移动大量数据的设备通常使用直接内存访问(DMA)。DMA设备硬件直接将传入数据写入RAM，并从RAM中读取传出数据。现代磁盘和网络设备使用DMA。DMA设备的驱动程序将在RAM中准备数据，然后使用对控制寄存器的单个写入来告诉设备处理准备好的数据。
+
+中断在设备需要在不可预测的时间、而且不太频繁地引起注意时是有意义的。但中断会产生高的CPU开销。因此，高速设备(如网络和磁盘控制器)使用减少中断需求的技巧。一个技巧是为整个一批传入或传出请求引发单个中断。另一个技巧是将中断完全禁用，并定期检查设备是否需要处理。这种技术称为轮询。轮询在设备执行操作非常快速的情况下是有意义的，但如果设备大部分时间处于空闲状态，它会浪费CPU时间。一些驱动程序根据当前设备负载动态切换在轮询和中断之间。
+
+UART驱动程序首先将传入数据复制到内核中的缓冲区，然后复制到用户空间。这在低数据速率下是有意义的，但这样的双重复制会显著降低对于生成或消耗数据非常快的设备的性能。一些操作系统能够在用户空间缓冲区和设备硬件之间直接传递数据，通常使用DMA。
+
+如第1章所述，控制台对应用程序来说表现为常规文件，应用程序使用read和write系统调用读取输入和写入输出。应用程序可能希望控制设备的一些方面，这不能通过标准的文件系统调用来表达(例如，在控制台驱动程序中启用/禁用行缓冲)。Unix操作系统支持ioctl系统调用用于处理这种情况。
+
+某些计算机使用需要系统必须在有界时间内做出响应。例如，在安全关键系统中，错过截止日期可能会导致灾难。Xv6不适用于硬实时环境。用于硬实时的操作系统往往是与应用程序链接的库，以允许进行最坏情况响应时间分析。Xv6也不适用于软实时应用程序，因为偶尔错过截止日期是可以接受的，因为xv6的调度程序过于简单，它有内核代码路径，在此路径中中断被禁用了很长时间。
+
 
